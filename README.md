@@ -1,2 +1,2 @@
-# AbsSum
-Abstractive Summarization built from scratch
+# Abstractive Summarization
+Abstractive Summarization from seq2seq baseline to pointer generator network built from scratch
