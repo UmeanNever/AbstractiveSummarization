@@ -2,6 +2,7 @@
 
 from gensim.corpora import Dictionary
 from text_utils.tokenize import NLTKTokenizer
+import torch
 import numpy as np
 
 
@@ -28,6 +29,8 @@ class SummaryDataset(object):
         self.vocab = vocab
         self.encoded_articles = encoded_articles
         self.encoded_summaries = encoded_summaries
+        assert len(encoded_summaries) == len(encoded_articles)
+        self.total_pairs = len(encoded_summaries)
 
     @classmethod
     def encode_raw_article_and_summary(cls, articles, summaries):
@@ -44,8 +47,8 @@ class SummaryDataset(object):
 
     @classmethod
     def read_encoded_article_and_summary(cls, vocab_url, encoded_articles_url, encoded_summaries_url):
-        encoded_articles = np.load(encoded_articles_url, allow_pickle=True)
-        encoded_summaries = np.load(encoded_summaries_url, allow_pickle=True)
+        encoded_articles = np.load(encoded_articles_url, allow_pickle=True)[:1000]
+        encoded_summaries = np.load(encoded_summaries_url, allow_pickle=True)[:1000]
         vocab = []
         with open(vocab_url, "r", encoding='utf-8') as f:
             for line in f:
@@ -61,5 +64,26 @@ class SummaryDataset(object):
         np.save(encoded_articles_url, np.array(self.encoded_articles))
         np.save(encoded_summaries_url, np.array(self.encoded_summaries))
 
-    def get_batch(self, batch_size, max_length):
-        pass
+    def get_batch(self, batch_size, src_max_length, tgt_max_length):
+        rolling_idx = 0
+        while rolling_idx < self.total_pairs:
+            if rolling_idx + batch_size >= self.total_pairs:
+                idx_batch = np.concatenate(
+                    (np.arange(rolling_idx, self.total_pairs), range(0,
+                                                                     (rolling_idx + batch_size - self.total_pairs))),
+                    axis=None)
+            else:
+                idx_batch = np.arange(rolling_idx, rolling_idx + batch_size)
+            rolling_idx = rolling_idx + batch_size
+            src_tensor = torch.zeros(src_max_length, batch_size, dtype=torch.long)
+            tgt_tensor = torch.zeros(tgt_max_length, batch_size, dtype=torch.long)
+            for i, idx in enumerate(idx_batch):
+                article = self.encoded_articles[idx]
+                summary = self.encoded_summaries[idx]
+                article_len = min(len(article), src_max_length - 1)
+                summary_len = min(len(summary), tgt_max_length - 1)
+                src_tensor[:article_len, i] = torch.as_tensor(article[:article_len], dtype=torch.long)
+                src_tensor[article_len] = self.SPECIAL_TOKENS['<EOS>']
+                tgt_tensor[:summary_len, i] = torch.as_tensor(summary[:summary_len], dtype=torch.long)
+                tgt_tensor[summary_len] = self.SPECIAL_TOKENS['<EOS>']
+            yield src_tensor, tgt_tensor
