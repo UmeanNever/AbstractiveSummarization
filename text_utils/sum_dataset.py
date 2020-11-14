@@ -29,7 +29,7 @@ class SummaryDataset(object):
         self.vocab = vocab
         self.encoded_articles = encoded_articles
         self.encoded_summaries = encoded_summaries
-        assert len(encoded_summaries) == len(encoded_articles)
+        assert len(encoded_summaries) == len(encoded_articles), "X y dimension not match"
         self.total_pairs = len(encoded_summaries)
 
     @classmethod
@@ -47,8 +47,8 @@ class SummaryDataset(object):
 
     @classmethod
     def read_encoded_article_and_summary(cls, vocab_url, encoded_articles_url, encoded_summaries_url):
-        encoded_articles = np.load(encoded_articles_url, allow_pickle=True)[:1000]
-        encoded_summaries = np.load(encoded_summaries_url, allow_pickle=True)[:1000]
+        encoded_articles = np.load(encoded_articles_url, allow_pickle=True)
+        encoded_summaries = np.load(encoded_summaries_url, allow_pickle=True)
         vocab = []
         with open(vocab_url, "r", encoding='utf-8') as f:
             for line in f:
@@ -82,8 +82,10 @@ class SummaryDataset(object):
                 summary = self.encoded_summaries[idx]
                 article_len = min(len(article), src_max_length - 1)
                 summary_len = min(len(summary), tgt_max_length - 1)
+                # print("Summary: {}".format(" ".join(str(summary[:summary_len]))))
                 src_tensor[:article_len, i] = torch.as_tensor(article[:article_len], dtype=torch.long)
-                src_tensor[article_len] = self.SPECIAL_TOKENS['<EOS>']
+                src_tensor[article_len, i] = self.SPECIAL_TOKENS['<EOS>']
                 tgt_tensor[:summary_len, i] = torch.as_tensor(summary[:summary_len], dtype=torch.long)
-                tgt_tensor[summary_len] = self.SPECIAL_TOKENS['<EOS>']
+                tgt_tensor[summary_len, i] = self.SPECIAL_TOKENS['<EOS>']
+                # print("Target tensor: {}".format(" ".join(str(tgt_tensor[:summary_len]))))
             yield src_tensor, tgt_tensor
