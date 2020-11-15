@@ -22,9 +22,12 @@ def encode_docs_by_gensim(dct, docs, special_tokens=None):
     return encoded_docs
 
 
+# defining a class representing the summarization dataset which includes methods of preprocessing
 class SummaryDataset(object):
+    # define
     SPECIAL_TOKENS = {'<PAD>': 0, '<UNK>': 1, '<SOS>': 2, '<EOS>': 3}
 
+    # the dataset includes a dictionary and encoded articles and summaries
     def __init__(self, vocab, encoded_articles, encoded_summaries):
         self.vocab = vocab
         self.encoded_articles = encoded_articles
@@ -32,6 +35,7 @@ class SummaryDataset(object):
         assert len(encoded_summaries) == len(encoded_articles), "X y dimension not match"
         self.total_pairs = len(encoded_summaries)
 
+    # initialize the dataset from raw text of articles and summaries
     @classmethod
     def encode_raw_article_and_summary(cls, articles, summaries):
         tokenized_articles = NLTKTokenizer.tokenize(articles)
@@ -45,6 +49,7 @@ class SummaryDataset(object):
         vocab = [id2token[i] for i in range(len(id2token))]
         return cls(vocab, encoded_articles, encoded_summaries)
 
+    # initialize the dataset from saved data
     @classmethod
     def read_encoded_article_and_summary(cls, vocab_url, encoded_articles_url, encoded_summaries_url):
         encoded_articles = np.load(encoded_articles_url, allow_pickle=True)
@@ -56,6 +61,7 @@ class SummaryDataset(object):
                     vocab.append(line.strip())
         return cls(vocab, encoded_articles, encoded_summaries)
 
+    # save the dataset
     def save(self, vocab_url, encoded_articles_url, encoded_summaries_url):
         with open(vocab_url, "w", encoding='utf-8') as f:
             for word in self.vocab:
@@ -64,6 +70,7 @@ class SummaryDataset(object):
         np.save(encoded_articles_url, np.array(self.encoded_articles))
         np.save(encoded_summaries_url, np.array(self.encoded_summaries))
 
+    # generate batches of article tensors and summary tensors for model training
     def get_batch(self, batch_size, src_max_length, tgt_max_length):
         rolling_idx = 0
         while rolling_idx < self.total_pairs:
@@ -84,7 +91,7 @@ class SummaryDataset(object):
                 summary_len = min(len(summary), tgt_max_length - 1)
                 # print("Summary: {}".format(" ".join(str(summary[:summary_len]))))
                 src_tensor[:article_len, i] = torch.as_tensor(article[:article_len], dtype=torch.long)
-                src_tensor[article_len, i] = self.SPECIAL_TOKENS['<EOS>']
+                src_tensor[article_len, i] = self.SPECIAL_TOKENS['<EOS>']  # add <EOS> token at the end of each article
                 tgt_tensor[:summary_len, i] = torch.as_tensor(summary[:summary_len], dtype=torch.long)
                 tgt_tensor[summary_len, i] = self.SPECIAL_TOKENS['<EOS>']
                 # print("Target tensor: {}".format(" ".join(str(tgt_tensor[:summary_len]))))

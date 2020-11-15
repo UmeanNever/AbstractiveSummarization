@@ -3,13 +3,9 @@ from nltk.tokenize import wordpunct_tokenize
 
 
 class NLTKTokenizer(object):
-
+    # define tokenize function
     @staticmethod
     def tokenize(docs):
-        """
-        :param docs: list of string
-        :return:
-        """
         res = []
         for doc in docs:
             tokens = wordpunct_tokenize(doc.strip().lower())

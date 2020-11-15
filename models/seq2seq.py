@@ -7,6 +7,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 EPS = 1e-20
 
 
+# Encoder RNN use GRU units
 class EncoderRNN(nn.Module):
 
     def __init__(self, emb_size, hidden_size, dropout_rate):
@@ -24,6 +25,7 @@ class EncoderRNN(nn.Module):
         return output, hidden
 
 
+# Decoder RNN use GRU units
 class DecoderRNN(nn.Module):
 
     def __init__(self, vocab_size, emb_size, hidden_size, dropout_rate, tied_embedding=None, enc_attention=False):
@@ -36,6 +38,8 @@ class DecoderRNN(nn.Module):
         self.pre_out = nn.Linear(output_size, emb_size)
 
         self.out_layer = nn.Linear(emb_size, vocab_size)
+
+        # Tied embedding means the word embedding layer weights are shared in encoder and decoder
         if tied_embedding is not None:
             self.out_layer.weight = tied_embedding.weight
 
@@ -48,8 +52,8 @@ class DecoderRNN(nn.Module):
         """
         output, hidden = self.GRU(embedded_input.unsqueeze(0), init_hidden)
         output = output.squeeze(0)
-        output_emb = self.pre_out(output)
-        logits = self.out_layer(output_emb)
+        output_emb = self.pre_out(output)  # transform the output from hidden size to embedding size
+        logits = self.out_layer(output_emb)  # calculate logits for each word
         final_output = F.softmax(logits, dim=1)
         return final_output, hidden
 
@@ -64,7 +68,7 @@ class Seq2Seq(nn.Module):
         self.params = params
 
         self.embedding = nn.Embedding(self.vocab_size, self.params.emb_size,
-                                      padding_idx=special_tokens['<PAD>'])
+                                      padding_idx=special_tokens['<PAD>']) # define word embedding layer, ignoring padding zeros
         self.encoder = EncoderRNN(params.emb_size, params.hidden_layer_units, params.dropout_rate)
         self.decoder = DecoderRNN(self.vocab_size, params.emb_size, params.hidden_layer_units, params.dropout_rate,
                                   tied_embedding=self.embedding)
@@ -88,29 +92,32 @@ class Seq2Seq(nn.Module):
         encoder_word_embeddings = self.embedding(source_tensor)
         encoder_outputs, encoder_hidden = self.encoder(encoder_word_embeddings, encoder_init_hidden)
 
+        # the first input of decoder RNN is set to be <SOS> token
         decoder_input_cur_step = torch.tensor([self.special_tokens['<SOS>']] * self.params.batch_size, device=device)
+        # copy the final hidden states from encoder
         decoder_hidden_cur_step = encoder_hidden
 
+        # create a tensor to record output word at each step
         output_token_idx = torch.zeros(tgt_length, self.params.batch_size, dtype=torch.long, device=device)
         total_loss = torch.tensor(0., device=device)
 
-        # run decoder
+        # run decoder step by step
         for i in range(tgt_length):
-            decoder_cur_word_embedding = self.embedding(decoder_input_cur_step)
+            decoder_cur_word_embedding = self.embedding(decoder_input_cur_step) # get the word embedding
             decoder_output_cur_step, decoder_hidden_cur_step = self.decoder(
                 decoder_cur_word_embedding, decoder_hidden_cur_step
             )
-            _, top_idx = decoder_output_cur_step.data.topk(1)
+            _, top_idx = decoder_output_cur_step.data.topk(1) # get the most likely word idx at this step
             top_idx = top_idx.squeeze(1).detach()
             output_token_idx[i] = top_idx
             if target_tensor is not None:
                 gold_standard = target_tensor[i]
             else:
                 gold_standard = top_idx
-            loss = self.criterion(torch.log(decoder_output_cur_step + EPS), gold_standard)
+            loss = self.criterion(torch.log(decoder_output_cur_step + EPS), gold_standard) # calculate the nll loss
             total_loss += loss
 
-            # teacher forcing
+            # teacher forcing, use ground truth word from target tensor as input word for next step
             if self.params.teacher_forcing:
                 decoder_input_cur_step = target_tensor[i]
             else:
