@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from models.beam import Beam
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 EPS = 1e-20
@@ -32,6 +33,7 @@ class DecoderRNN(nn.Module):
         super(DecoderRNN, self).__init__()
         self.GRU = nn.GRU(emb_size, hidden_size, dropout=dropout_rate)
         output_size = hidden_size
+        self.enc_attention = enc_attention
         if enc_attention:
             self.bilinear = nn.Bilinear(hidden_size, hidden_size, 1)
             output_size += hidden_size
@@ -48,10 +50,17 @@ class DecoderRNN(nn.Module):
         One step decoder
         :param embedded_input: (batch size, embed size)
         :param init_hidden: (1, batch size, decoder hidden size)
+        :param encoder_states: (src seq len, batch size, hidden size)
         :return:
         """
         output, hidden = self.GRU(embedded_input.unsqueeze(0), init_hidden)
         output = output.squeeze(0)
+        if self.enc_attention:
+            src_seq_len = encoder_states.size(0)
+            att_a = self.bilinear(hidden.expand(src_seq_len, -1, -1).contiguous(), encoder_states)
+            att_a = F.softmax(att_a, dim=0).transpose(0, 1)
+            att_emb = torch.bmm(encoder_states.permute(1, 2, 0), att_a)
+            output = torch.cat((output, att_emb.squeeze(2)), dim=1)
         output_emb = self.pre_out(output)  # transform the output from hidden size to embedding size
         logits = self.out_layer(output_emb)  # calculate logits for each word
         final_output = F.softmax(logits, dim=1)
@@ -67,11 +76,14 @@ class Seq2Seq(nn.Module):
         self.special_tokens = special_tokens
         self.params = params
 
+        # TODO: embedding sharing here may be wrong
         self.embedding = nn.Embedding(self.vocab_size, self.params.emb_size,
-                                      padding_idx=special_tokens['<PAD>']) # define word embedding layer, ignoring padding zeros
+                                      padding_idx=special_tokens[
+                                          '<PAD>'])  # define word embedding layer, ignoring padding zeros
         self.encoder = EncoderRNN(params.emb_size, params.hidden_layer_units, params.dropout_rate)
         self.decoder = DecoderRNN(self.vocab_size, params.emb_size, params.hidden_layer_units, params.dropout_rate,
-                                  tied_embedding=self.embedding)
+                                  tied_embedding=self.embedding if self.params.tie_embed else None,
+                                  enc_attention=self.params.enc_attention)
         self.criterion = nn.NLLLoss(ignore_index=special_tokens['<PAD>'])
 
     def forward(self, source_tensor, target_tensor=None):
@@ -93,7 +105,8 @@ class Seq2Seq(nn.Module):
         encoder_outputs, encoder_hidden = self.encoder(encoder_word_embeddings, encoder_init_hidden)
 
         # the first input of decoder RNN is set to be <SOS> token
-        decoder_input_cur_step = torch.tensor([self.special_tokens['<SOS>']] * self.params.batch_size, device=device)
+        decoder_input_cur_step = torch.tensor([self.special_tokens['<SOS>']] * self.params.batch_size, device=device,
+                                              dtype=torch.long)
         # copy the final hidden states from encoder
         decoder_hidden_cur_step = encoder_hidden
 
@@ -103,18 +116,18 @@ class Seq2Seq(nn.Module):
 
         # run decoder step by step
         for i in range(tgt_length):
-            decoder_cur_word_embedding = self.embedding(decoder_input_cur_step) # get the word embedding
+            decoder_cur_word_embedding = self.embedding(decoder_input_cur_step)  # get the word embedding
             decoder_output_cur_step, decoder_hidden_cur_step = self.decoder(
-                decoder_cur_word_embedding, decoder_hidden_cur_step
+                decoder_cur_word_embedding, decoder_hidden_cur_step, encoder_outputs
             )
-            _, top_idx = decoder_output_cur_step.data.topk(1) # get the most likely word idx at this step
+            _, top_idx = decoder_output_cur_step.data.topk(1)  # get the most likely word idx at this step
             top_idx = top_idx.squeeze(1).detach()
             output_token_idx[i] = top_idx
             if target_tensor is not None:
                 gold_standard = target_tensor[i]
             else:
                 gold_standard = top_idx
-            loss = self.criterion(torch.log(decoder_output_cur_step + EPS), gold_standard) # calculate the nll loss
+            loss = self.criterion(torch.log(decoder_output_cur_step + EPS), gold_standard)  # calculate the nll loss
             total_loss += loss
 
             # teacher forcing, use ground truth word from target tensor as input word for next step
@@ -126,4 +139,35 @@ class Seq2Seq(nn.Module):
         return output_token_idx, total_loss
 
     def beam_search(self, source_tensor, beam_size):
-        pass
+        """
+        Use beam search to generate summaries one by one.
+        :param source_tensor: (src seq len, batch size), batch size need to be 1.
+        :param beam_size: beam search size
+        :return: same as forward
+        """
+        batch_size = source_tensor.size(1)
+        assert batch_size == 1
+        # run encoder
+        encoder_init_hidden = torch.zeros(1, batch_size, self.params.hidden_layer_units, device=device)
+        encoder_word_embeddings = self.embedding(source_tensor)
+        encoder_outputs, encoder_hidden = self.encoder(encoder_word_embeddings, encoder_init_hidden)
+
+        # build batch of beam size and initialize states
+        encoder_outputs = encoder_outputs.expand(-1, beam_size, -1).contiguous()
+        decoder_hidden_cur_step = encoder_hidden.expand(-1, beam_size, -1).contiguous()
+        be = Beam(beam_size, self.special_tokens)
+
+        step = 0
+        while step <= self.params.max_dec_steps:
+            decoder_input_cur_step = be.states[-1]
+            decoder_cur_word_embedding = self.embedding(decoder_input_cur_step)
+            decoder_output_cur_step, decoder_hidden_cur_step = self.decoder(
+                decoder_cur_word_embedding, decoder_hidden_cur_step, encoder_outputs
+            )
+            if be.advance(decoder_output_cur_step):
+                break
+            step += 1
+        result_tokens = be.trace(0)
+        output_token_idx = torch.tensor(result_tokens, device=device, dtype=torch.long).unsqueeze(1).expand(-1,
+                                                                                                            batch_size)
+        return output_token_idx, torch.tensor(0., device=device)

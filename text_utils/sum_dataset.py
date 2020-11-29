@@ -74,7 +74,7 @@ class SummaryDataset(object):
     def get_batch(self, batch_size, src_max_length, tgt_max_length):
         rolling_idx = 0
         while rolling_idx < self.total_pairs:
-            if rolling_idx + batch_size >= self.total_pairs:
+            if rolling_idx + batch_size > self.total_pairs:
                 idx_batch = np.concatenate(
                     (np.arange(rolling_idx, self.total_pairs), range(0,
                                                                      (rolling_idx + batch_size - self.total_pairs))),

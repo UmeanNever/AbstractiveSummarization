@@ -11,10 +11,19 @@ class Params(object):
         self.hidden_layer_units = 128
         self.dropout_rate = 0.
         self.max_dec_steps = 32
-        self.model_path_prefix = 'checkpoints/baseline'
+        self.beam_size = 4
+
+        self.enc_attention = True
+        self.tie_embed = False
+
+        if self.enc_attention:
+            self.model_path_prefix = 'checkpoints/enc_attn'
+        else:
+            self.model_path_prefix = 'checkpoints/baseline'
+
         if mode == 'train':
             self.teacher_forcing = True
             self.batch_size = 128
         else:
             self.teacher_forcing = False
-            self.batch_size = 128
+            self.batch_size = 1

@@ -16,10 +16,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed_article", default='data/test_encoded_articles.npy')
-    parser.add_argument("--processed_summary", default='data/test_encoded_summaries.npy')
+    parser.add_argument("--processed_article", default='data/train_encoded_articles.npy')
+    parser.add_argument("--processed_summary", default='data/train_encoded_summaries.npy')
     parser.add_argument("--vocab", default='data/vocab.txt')
-    parser.add_argument("--mode", default='test', help='train, test')
+    parser.add_argument("--mode", default='train', help='train, test')
 
     args = parser.parse_args()
     dataset = SummaryDataset.read_encoded_article_and_summary(args.vocab,
@@ -47,8 +47,10 @@ def train(dataset, params):
     for epoch_count in range(1, 1 + params.n_epoch):
         epoch_loss = 0.
         prog_bar = tqdm(range(1, n_batches + 1), desc='Epoch %d' % epoch_count)  # track the progress
+        model.train()
 
         for batch_count in prog_bar:
+            optimizer.zero_grad()
             batch = batches[batch_count - 1]
             source_tensor, target_tensor = batch
             source_tensor = source_tensor.to(device)
@@ -56,24 +58,24 @@ def train(dataset, params):
 
             # calculate output and losses
             output_tokens, batch_loss = model(source_tensor, target_tensor)
-            batch_loss_value = batch_loss.item()
 
             # backward propagation
             batch_loss.backward()
             optimizer.step()
 
+            batch_loss_value = batch_loss.item()
             epoch_loss += batch_loss_value
             epoch_avg_loss = epoch_loss / batch_count
 
             if batch_count % 100 == 0:
                 prog_bar.set_postfix(loss='%g' % epoch_avg_loss)
-                # print("\n")
-                # print("Example Article:\n")
-                # print("{}\n".format(" ".join([dataset.vocab[i] for i in source_tensor[:, 0]])))
-                # print("Example Summary:\n")
-                # print("{}\n".format(" ".join([dataset.vocab[i] for i in target_tensor[:, 0]])))
-                # print("Output Summmary:\n")
-                # print("{}\n".format(" ".join([dataset.vocab[i] for i in output_tokens[:, 0]])))
+                print("\n")
+                print("Example Article:\n")
+                print("{}\n".format(" ".join([dataset.vocab[i] for i in source_tensor[:, 0]])))
+                print("Example Summary:\n")
+                print("{}\n".format(" ".join([dataset.vocab[i] for i in target_tensor[:, 0]])))
+                print("Output Summmary:\n")
+                print("{}\n".format(" ".join([dataset.vocab[i] for i in output_tokens[:, 0]])))
 
         # save model
         filename = "{}.{}.pt".format(params.model_path_prefix, epoch_count)
@@ -105,7 +107,7 @@ def test(dataset, params):
         with torch.no_grad():
             source_tensor = source_tensor.to(device)
             target_tensor = target_tensor.to(device)
-            output_tokens, batch_loss = model(source_tensor)
+            output_tokens, batch_loss = model.beam_search(source_tensor, params.beam_size)
         batch_loss_value = batch_loss.item()
         loss_total += batch_loss_value
 
@@ -144,13 +146,14 @@ def get_raw_texts(tensors, vocab, special_tokens):
     for tensor in tensors:
         text = []
         for idx in tensor:
-            if idx == special_tokens['<EOS>']: # omit all words after the <EOS> token
+            if idx == special_tokens['<EOS>']:  # omit all words after the <EOS> token
                 break
             text.append(vocab[idx])
-        if text == ["."]: # avoid error caused by "." when calculating rouge score
+        if text == ["."]:  # avoid error caused by "." when calculating rouge score
             text = [","]
         res.append(" ".join(text))
     return res
+
 
 if __name__ == '__main__':
     main()
