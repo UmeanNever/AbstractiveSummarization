@@ -16,10 +16,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed_article", default='data/train_encoded_articles.npy')
-    parser.add_argument("--processed_summary", default='data/train_encoded_summaries.npy')
+    parser.add_argument("--processed_article", default='data/test_encoded_articles.npy')
+    parser.add_argument("--processed_summary", default='data/test_encoded_summaries.npy')
     parser.add_argument("--vocab", default='data/vocab.txt')
-    parser.add_argument("--mode", default='train', help='train, test')
+    parser.add_argument("--mode", default='test', help='train, test')
 
     args = parser.parse_args()
     dataset = SummaryDataset.read_encoded_article_and_summary(args.vocab,
@@ -29,10 +29,12 @@ def main():
 
     if args.mode == 'train':
         params = Params(args.mode)
+        torch.cuda.empty_cache()
         train(dataset, params)
 
     if args.mode == 'test':
         params = Params(args.mode)
+        torch.cuda.empty_cache()
         test(dataset, params)
 
 
@@ -90,7 +92,7 @@ def test(dataset, params):
     model = model.to(device)
 
     # load model from saved checkpoint
-    model.load_state_dict(torch.load(params.model_path_prefix + ".2.pt"))
+    model.load_state_dict(torch.load(params.model_path_prefix + ".25.pt"))
     model.eval()
     rouge = Rouge()
 

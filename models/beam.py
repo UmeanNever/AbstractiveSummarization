@@ -12,10 +12,17 @@ class Beam(object):
         self.states = [torch.tensor([self.special_tokens['<SOS>']] * beam_size, device=device, dtype=torch.long)]
         self.previous_idx_history = []
 
+        # TODO: deal with <EOS> in beam search
+        # self.pad_ids = torch.tensor([self.special_tokens['<PAD>']] * beam_size, device=device, dtype=torch.long)
+        # self.rows_with_eos = torch.zeros(beam_size, device=device, dtype=torch.long)
+
     def advance(self, decoder_output):
         vocab_size = decoder_output.size(1)
         beam_scores = decoder_output + self.cur_scores.unsqueeze(1).expand_as(decoder_output)
         flat_beam_scores = beam_scores.view(-1)
+
+        # cur_rows_with_eos = self.rows_with_eos.unsqueeze(1).expand_as(decoder_output).view(-1)
+        # flat_beam_scores = torch.where(cur_rows_with_eos == 1, torch.zeros_like(flat_beam_scores), flat_beam_scores)
 
         best_scores, best_score_ids = flat_beam_scores.data.topk(self.beam_size)
         self.cur_scores = best_scores

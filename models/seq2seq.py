@@ -22,6 +22,7 @@ class EncoderRNN(nn.Module):
         :param init_hidden: (1, batch size, encoder hidden size)
         :return:
         """
+        # TODO: add layer norm
         output, hidden = self.GRU(input_word_embeddings, init_hidden)
         return output, hidden
 
@@ -60,6 +61,7 @@ class DecoderRNN(nn.Module):
             att_a = self.bilinear(hidden.expand(src_seq_len, -1, -1).contiguous(), encoder_states)
             att_a = F.softmax(att_a, dim=0).transpose(0, 1)
             att_emb = torch.bmm(encoder_states.permute(1, 2, 0), att_a)
+            # concat output with attention embeddings. TODO: average instead of concat
             output = torch.cat((output, att_emb.squeeze(2)), dim=1)
         output_emb = self.pre_out(output)  # transform the output from hidden size to embedding size
         logits = self.out_layer(output_emb)  # calculate logits for each word
@@ -114,19 +116,27 @@ class Seq2Seq(nn.Module):
         output_token_idx = torch.zeros(tgt_length, self.params.batch_size, dtype=torch.long, device=device)
         total_loss = torch.tensor(0., device=device)
 
+        pad_ids = torch.tensor([self.special_tokens['<PAD>']] * self.params.batch_size, device=device, dtype=torch.long)
+        rows_with_eos = torch.zeros(self.params.batch_size, device=device, dtype=torch.long)
+
         # run decoder step by step
         for i in range(tgt_length):
             decoder_cur_word_embedding = self.embedding(decoder_input_cur_step)  # get the word embedding
             decoder_output_cur_step, decoder_hidden_cur_step = self.decoder(
                 decoder_cur_word_embedding, decoder_hidden_cur_step, encoder_outputs
             )
-            _, top_idx = decoder_output_cur_step.data.topk(1)  # get the most likely word idx at this step
+            # get the most likely word idx at this step, TODO: sampling instead of greedy
+            _, top_idx = decoder_output_cur_step.data.topk(1)
             top_idx = top_idx.squeeze(1).detach()
+            top_idx = torch.where(rows_with_eos == 1, pad_ids, top_idx)
             output_token_idx[i] = top_idx
             if target_tensor is not None:
                 gold_standard = target_tensor[i]
             else:
+                # TODO: gumbel softmax
                 gold_standard = top_idx
+            rows_with_eos = rows_with_eos | (top_idx == self.special_tokens['<EOS>']).long()
+
             loss = self.criterion(torch.log(decoder_output_cur_step + EPS), gold_standard)  # calculate the nll loss
             total_loss += loss
 
